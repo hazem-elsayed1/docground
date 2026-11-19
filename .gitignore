@@ -1,0 +1,41 @@
+
+# Python virtual environment
+.venv/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Test and tool caches
+.pytest_cache/
+pytest-of-*/
+.ruff_cache/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+.envrc
+.netrc
+.pypirc
+.secrets/
+secrets/
+credentials.json
+secrets.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local data artifacts
+data/raw/
+data/processed/
+
+# Generated model and embedding artifacts
+models/
+.cache/
+
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db
