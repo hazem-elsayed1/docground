@@ -25,6 +25,14 @@ def _field(obj, key, kind, path):
     return obj[key]
 
 
+def _range(record, path):
+    start = _field(record, "start", int, path)
+    end = _field(record, "end", int, path)
+    if type(start) is not int or type(end) is not int or not 0 <= start < end:
+        raise ValueError(f"Invalid character range at {path}")
+    return start, end
+
+
 def _leaves(blocks, path, anchor):
     """Visit text fields in schema order. Paths are relative to the section."""
     for index, block in enumerate(blocks):

@@ -6,55 +6,13 @@ from pathlib import Path
 from statistics import mean
 from time import perf_counter_ns
 
-from src.chunking import _field, evidence_coverage
-from src.retrieval import B, BM25, DEFAULT_TOP_K, K1, TOKENIZER, _range, _validate_top_k
+from src.annotations import validate_annotations
+from src.chunking import evidence_coverage
+from src.retrieval import B, BM25, DEFAULT_TOP_K, K1, TOKENIZER, _validate_top_k
 
 
 PROTOCOL_VERSION = 1
 METRICS = ("precision_at_k", "recall_at_k", "reciprocal_rank_at_k", "complete_evidence_coverage_at_k")
-
-
-def _validate_annotations(annotations, index):
-    version = _field(annotations, "annotation_schema_version", int, "")
-    if type(version) is not int or version != 1:
-        raise ValueError("Expected annotation schema version 1")
-    if not _field(annotations, "annotation_version", str, "").strip():
-        raise ValueError("annotation_version must be nonempty")
-    if _field(annotations, "split", str, "") not in ("development", "frozen-test"):
-        raise ValueError("split must be development or frozen-test")
-    if _field(annotations, "corpus_revision", str, "") != index.corpus_revision:
-        raise ValueError("Annotation corpus_revision does not match the chunk artifact")
-    questions = _field(annotations, "questions", list, "")
-    if not questions:
-        raise ValueError("Annotations must contain at least one question")
-
-    fields = {(chunk["section_id"], field["path"]): field
-              for chunk in index.chunks for field in chunk["fields"]}
-    seen = set()
-    for i, question in enumerate(questions):
-        path = f"/questions/{i}"
-        question_id = _field(question, "id", str, path)
-        text = _field(question, "question", str, path)
-        if not question_id.strip() or question_id in seen or not text.strip():
-            raise ValueError(f"Expected a unique nonempty ID and question text at {path}")
-        seen.add(question_id)
-        answerable = _field(question, "answerable", bool, path)
-        units = _field(question, "evidence_units", list, path)
-        if answerable != bool(units):
-            raise ValueError(f"Evidence units must be present only for answerable questions at {path}")
-        for j, alternatives in enumerate(units):
-            unit_path = f"{path}/evidence_units/{j}"
-            if not isinstance(alternatives, list) or not alternatives:
-                raise ValueError(f"A unit requires at least one alternative span at {unit_path}")
-            for k, span in enumerate(alternatives):
-                location = f"{unit_path}/{k}"
-                section = _field(span, "section_id", str, location)
-                start, end = _range(span, location)
-                for key, offset in (("start_block_path", start), ("end_block_path", end - 1)):
-                    field = fields.get((section, _field(span, key, str, location)))
-                    if field is None or not field["start"] <= offset < field["end"]:
-                        raise ValueError(f"Evidence endpoint does not match {key} at {location}")
-    return questions
 
 
 def _relevant_ids(chunks, spans):
@@ -85,7 +43,9 @@ def _score_question(index, units, hits, top_k):
 
 def evaluate(index: BM25, annotations: dict, top_k: int = DEFAULT_TOP_K) -> dict:
     _validate_top_k(top_k)
-    questions = _validate_annotations(annotations, index)
+    fields = {(chunk["section_id"], field["path"]): field
+              for chunk in index.chunks for field in chunk["fields"]}
+    questions = validate_annotations(annotations, index.corpus_revision, fields)
     rows = []
     for question in questions:
         start = perf_counter_ns()

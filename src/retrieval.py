@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
-from src.chunking import SEPARATOR, _digest, _field
+from src.chunking import SEPARATOR, _digest, _field, _range
 
 
 DEFAULT_TOP_K = 5
@@ -44,14 +44,6 @@ def tokenize(text: str) -> list[str]:
 def _validate_top_k(top_k: int) -> None:
     if type(top_k) is not int or top_k < 1:
         raise ValueError("top_k must be a positive integer")
-
-
-def _range(record, path):
-    start = _field(record, "start", int, path)
-    end = _field(record, "end", int, path)
-    if type(start) is not int or type(end) is not int or not 0 <= start < end:
-        raise ValueError(f"Invalid character range at {path}")
-    return start, end
 
 
 def _validate_chunks(artifact):
