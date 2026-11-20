@@ -1,6 +1,6 @@
 # DocGround
 
-DocGround is an evaluation-first retrieval-augmented generation project for scikit-learn documentation. Milestone 1 converts a local HTML snapshot into structured JSON for later use.
+DocGround is an evaluation-first retrieval-augmented generation project for scikit-learn documentation. It ingests a pinned HTML snapshot, builds deterministic chunks, and provides a BM25 retrieval baseline and a separate evaluation runner.
 
 ## Reproduce Milestone 1
 
@@ -59,3 +59,69 @@ Annotate each required evidence unit with `document_id`, `section_id`, `start`, 
 `evidence_coverage(required_units, chunks)` returns one Boolean per required unit in input order. Credit requires **one chunk to contain the entire nonempty span** in the same document revision and section. Its first and last characters must belong to mapped text fields. A unit can cross fields inside one chunk. Splitting that unit across two returned chunks earns zero credit for it. Shared words or headings earn no credit on their own.
 
 For a question requiring multiple units, use `all(flags)` for full coverage or `sum(flags) / len(flags)` for the fraction covered. Different chunks may cover different units. Repeating a chunk gives no additional credit. This rule measures coverage of the annotated locations. Equivalent passages elsewhere require separate annotation policy. Table layout, list markers, and heading strings are excluded from the canonical body. Raw HTML byte positions and token counts are outside this coordinate system.
+
+## Milestone 2B: BM25 retrieval
+
+Run retrieval against the artifact produced by the chunking command above.
+
+```console
+python -m src.retrieval data/processed/common_pitfalls.chunks.json "train_test_split data leakage" --top-k 5
+```
+
+The command prints a JSON array of ranked chunks, each with its BM25 `score` and all original fields, including `id`, `text`, section and heading information, source URL and anchor, source SHA-256, and canonical character offsets. `--top-k` defaults to 5 and accepts positive integers. The ranker returns up to K positive-scoring matches. Blank queries, punctuation-only queries, and queries whose tokens are all unknown return `[]`. Unknown tokens in a mixed query are ignored. Exact score ties use ascending chunk ID.
+
+BM25 uses `k1 = 1.2`, `b = 0.75`, and `log1p((N - df + 0.5) / (df + 0.5))` for inverse document frequency, where N is the number of chunks and df counts chunks with the term. Term frequencies and length are computed over chunk text. The ranker scans the chapter in memory. [Apache Lucene BM25Similarity parameter and IDF reference](https://lucene.apache.org/core/10_5_2/core/org/apache/lucene/search/similarities/BM25Similarity.html)
+
+The tokenizer finds Unicode `\w+` runs, keeps compound identifiers, adds their underscore and ASCII camel-case components, and casefolds the results. Query terms are deduplicated before scoring. Document term frequencies count each emitted token. Heading paths serve as provenance. Phrase matching, stemming, semantic equivalence, and splitting case transitions outside ASCII are outside tokenizer v1.
+
+| Input | Tokens |
+| --- | --- |
+| `train_test_split` | `train_test_split`, `train`, `test`, `split` |
+| `StandardScaler` | `standardscaler`, `standard`, `scaler` |
+| `Pipeline` | `pipeline` |
+
+## Milestone 2B: Retrieval evaluation
+
+Evaluate one human-reviewed split per invocation. Maintain separate files for `development` and `frozen-test`. Use development annotations for iteration and reserve frozen-test for a fixed protocol. No human-reviewed annotations or benchmark scores are included with this milestone.
+
+```console
+python -m src.evaluation data/processed/common_pitfalls.chunks.json path/to/development.json --top-k 5
+```
+
+### Annotation schema v1
+
+| Key | Contract |
+| --- | --- |
+| `annotation_schema_version` | Integer `1` |
+| `annotation_version` | Nonempty revision string for the annotation set. Change it for edits to reviewed questions or evidence. |
+| `corpus_revision` | Chunk artifact `document_id`, the SHA-256 of the canonical processed document serialized as sorted compact JSON |
+| `split` | `development` or `frozen-test` |
+| `questions` | Nonempty array of records with unique, stable `id` strings, nonempty `question` strings, boolean `answerable`, and an `evidence_units` array |
+
+For an answerable question, each entry in `evidence_units` is a nonempty array of alternative spans for one required unit. Alternatives within a unit are interchangeable and all units are required. Unanswerable questions have `evidence_units: []`. This object shows the shape of one span using placeholder coordinates.
+
+```json
+{
+  "section_id": "<section id>",
+  "start_block_path": "/blocks/0/text",
+  "end_block_path": "/blocks/1/text",
+  "start": 0,
+  "end": 42
+}
+```
+
+Block paths are JSON Pointers to the canonical text fields relative to the section. Ranges are document-global, zero-based, and half-open in Unicode code points. The start and final included character must be in the specified fields of the same section. A span may cross fields, including the inserted separators. Coordinates are independent of chunk size. The evaluator rejects mismatched corpus revisions and invalid endpoints.
+
+### Evaluation protocol v1
+
+| Measure | Per-question rule |
+| --- | --- |
+| Precision@K | Retrieved relevant chunks divided by requested K. Unfilled ranks contribute zero. |
+| Recall@K | Retrieved relevant chunks divided by all relevant chunks in the selected artifact. |
+| MRR@K | Inverse rank of the first relevant chunk among the first K results, or zero when absent. |
+| Complete Evidence Coverage@K | One when each required unit has an alternative fully contained in one of the first K chunks, otherwise zero. Separate chunks can satisfy separate units. |
+| Retrieval latency | Wall-clock milliseconds per query around tokenization, ranking, and result materialization on an already-built index. |
+
+A chunk is relevant when at least one of its source characters overlaps any annotated alternative in the same section. A chunk contributes at most once to relevance counts, even if it overlaps multiple spans. A span split across chunks may make both chunks relevant. Complete coverage still requires one chunk to contain the full span, using the Milestone 2A rule. If the chunk configuration splits every alternative for a unit, the unit cannot be covered with that artifact. Unannotated evidence and semantic or topical similarity receive no credit. Comparing relevance scores across chunk configurations changes the ground truth chunk set, even with the same annotation coordinates.
+
+The four quality measures are macro-averaged across answerable questions. A split containing only unanswerable questions reports `null` for these averages. Unanswerable counts and their no-result counts are reported separately. A no-result count alone provides no measure of answerability detection. Mean latency includes all questions and excludes index construction, annotation validation, evaluation scoring, and JSON serialization. Timing varies by run and environment. The report records the corpus revision, source and exact chunk-artifact SHA-256 values, chunk size, tokenizer configuration, BM25 parameters, top K, split, annotation version, and evaluation protocol version.
