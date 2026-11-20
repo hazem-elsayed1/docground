@@ -82,7 +82,7 @@ The tokenizer finds Unicode `\w+` runs, keeps compound identifiers, adds their u
 
 ## Milestone 2B: Retrieval evaluation
 
-Evaluate one human-reviewed split per invocation. Maintain separate files for `development` and `frozen-test`. Use development annotations for iteration and reserve frozen-test for a fixed protocol. No human-reviewed annotations or benchmark scores are included with this milestone.
+Evaluate one human-reviewed split per invocation. Maintain separate files for `development` and `frozen-test`. Use development annotations for iteration and reserve frozen-test for a fixed protocol. The first [human-reviewed development pilot](annotations/development/pilot-v1.json) has ten questions. See the [review record](annotations/pilot-development-review.md) for evidence and provenance. Benchmark scores are pending.
 
 ```console
 python -m src.evaluation data/processed/common_pitfalls.chunks.json path/to/development.json --top-k 5

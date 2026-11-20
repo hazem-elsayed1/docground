@@ -1,5 +1,7 @@
 # Human annotation guide
 
+The first human-reviewed development dataset is [pilot-v1.json](development/pilot-v1.json). Its [review record](pilot-development-review.md) contains the expected answers, approved evidence, and corpus hashes. The frozen-test split is empty.
+
 Prepare one draft per split against the pinned processed JSON. The helper uses the same text, offsets, and document revision as chunking. A different processed revision requires reviewing coordinates again. Changing chunk size leaves coordinates intact.
 
 ## Find evidence
@@ -27,4 +29,4 @@ python -m src.annotations data/processed/common_pitfalls.json review development
 python -m src.annotations data/processed/common_pitfalls.json export development.draft.json annotations/development/pilot-v1.json
 ```
 
-`review` displays the question, answerability, required units, alternatives, coordinates, and exact excerpts. It does not write files. `export` validates again and creates a new UTF-8 JSON file. It refuses to overwrite any existing file. Keep reviewed development exports under `annotations/development/` and reviewed holdout exports under `annotations/frozen-test/`. For the holdout, use independent drafting and review, freeze the approved version before using it, and reserve it for the fixed evaluation protocol. Keep both locations empty until dataset authoring is approved.
+`review` displays the question, answerability, required units, alternatives, coordinates, and exact excerpts. It does not write files. `export` validates again and creates a new UTF-8 JSON file. It refuses to overwrite any existing file. Keep reviewed development exports under `annotations/development/` and reviewed holdout exports under `annotations/frozen-test/`. For the holdout, use independent drafting and review, freeze the approved version before using it, and reserve it for the fixed evaluation protocol. Write exports to either location after human approval.
