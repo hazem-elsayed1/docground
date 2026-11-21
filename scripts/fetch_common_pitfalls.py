@@ -16,7 +16,7 @@ MAX_BYTES = 1_000_000
 class _SnapshotRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # The official mirror sends an HTTP Location. Fetch the same target over TLS.
-        if newurl not in (OFFICIAL_URL, OFFICIAL_URL.replace("https:", "http:", 1)):
+        if req.full_url != SOURCE_URL or newurl not in (OFFICIAL_URL, OFFICIAL_URL.replace("https:", "http:", 1)):
             raise ValueError(f"Unexpected snapshot redirect: {newurl}")
         return super().redirect_request(req, fp, code, msg, headers, OFFICIAL_URL)
 
@@ -24,27 +24,29 @@ class _SnapshotRedirect(HTTPRedirectHandler):
 _opener = build_opener(_SnapshotRedirect())
 
 
-def _verify(payload: bytes, origin: str) -> None:
+def _verify(payload: bytes, origin: str, expected_sha256: str) -> None:
     actual = sha256(payload).hexdigest()
-    if actual != SOURCE_SHA256:
-        raise ValueError(f"{origin}: expected SHA-256 {SOURCE_SHA256}, got {actual}")
+    if actual != expected_sha256:
+        raise ValueError(f"{origin}: expected SHA-256 {expected_sha256}, got {actual}")
 
 
-def fetch_snapshot(path: Path) -> str:
+def fetch_snapshot(path: Path, *, url: str | None = None, expected_sha256: str | None = None) -> str:
+    url = SOURCE_URL if url is None else url
+    expected_sha256 = SOURCE_SHA256 if expected_sha256 is None else expected_sha256
     try:
         with path.open("rb") as existing:
             payload = existing.read(MAX_BYTES + 1)
     except FileNotFoundError:
         pass
     else:
-        _verify(payload, str(path))
+        _verify(payload, str(path), expected_sha256)
         return "Verified existing snapshot"
 
-    with _opener.open(SOURCE_URL, timeout=30) as response:
+    with _opener.open(url, timeout=30) as response:
         payload = response.read(MAX_BYTES + 1)
     if len(payload) > MAX_BYTES:
         raise ValueError("Downloaded snapshot exceeds the size limit")
-    _verify(payload, SOURCE_URL)
+    _verify(payload, url, expected_sha256)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("xb") as destination:
         destination.write(payload)

@@ -159,3 +159,36 @@ python -m src.evaluation data/processed/common_pitfalls.chunks.json annotations/
 python -m src.evaluation data/processed/common_pitfalls.chunks.json annotations/development/pilot-v1.json --top-k 3
 python -m src.evaluation data/processed/common_pitfalls.chunks.json annotations/development/pilot-v1.json --top-k 5
 ~~~
+
+## Rebuild the pinned multi-document corpus
+
+[Corpus manifest v1](corpus/scikit-learn-1.9.1-v1.json) pins four pages from scikit-learn 1.9.1. The upstream versioned URLs use the `/1.9/` series, which can change at a patch release. The manifest checks the exact bytes of each snapshot, and the builder checks that every page declares 1.9.1. Source attribution and the [release's BSD 3-Clause license](https://github.com/scikit-learn/scikit-learn/blob/1.9.1/COPYING) travel with both artifacts.
+
+From the repository root, with the Python 3.14.6 virtual environment active, run:
+
+~~~console
+python -m pip install -r requirements.txt soupsieve==4.1.2 typing-extensions==4.16.0
+python -m src.corpus fetch
+python -m src.corpus build
+~~~
+
+The fetch command reuses matching HTML in `data/raw/`, checks each download before writing, and refuses to overwrite an existing snapshot. If an upstream page changes, use a local copy with the manifest's SHA-256. To use another manifest or raw directory, pass `--manifest PATH` or `--raw-dir PATH`. The builder reads the verified snapshots and writes `documents.json` and `chunks.json` to `data/processed/corpus-v1/`. The original single-document CLI and its paths still reproduce Milestone 4.
+
+The corpus schema wraps the existing schema-v1 documents and chunk artifacts in manifest order. Both wrappers record the corpus version, canonical manifest SHA-256 (sorted compact UTF-8 JSON), and attribution. Each entry has a manifest `id`, a pinned download `url` and `sha256`, and a content-specific `document_id`. The inner document retains its HTML canonical URL for section identity and source citation. Offsets restart at zero for every document. Evidence is identified by `document_id`, `section_id`, and its document-local range. The matcher requires these together and the builder rejects duplicate revision, section, and chunk IDs across documents.
+
+| Document | Sections | Chunks |
+| --- | ---: | ---: |
+| Common pitfalls | 15 | 27 |
+| Pipelines and composite estimators | 13 | 25 |
+| Cross-validation | 27 | 46 |
+| Model evaluation | 55 | 130 |
+| Total | 110 | 228 |
+
+To verify a second build, use `python -m src.corpus build --output-dir data/processed/corpus-v1-check` and compare both files with the first build. The expected SHA-256 values for Python 3.14.6 and the dependencies above are:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `documents.json` | `83898f9410710eb4f7acf3b97d0602235687a86ed7ededa0fb002bcca75edfab` |
+| `chunks.json` | `cee1cbdfc77457a77a6a1741bd72937f8095c511f0b4c4208616367e7dcfa882` |
+
+The parser keeps code whitespace, table cell order and explicit spans, and text inside collapsible panels. Figures and plots are represented only by any extracted surrounding text or captions. Math markup can contribute text but is not rendered or interpreted. Definition lists are flattened, and inline markup and hyperlink destinations are discarded. The existing 1,200-character packing rule keeps oversized text fields whole. The expanded wrappers are corpus build artifacts. Annotation and evaluation commands continue to use their single-document schemas.
