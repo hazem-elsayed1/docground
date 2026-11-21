@@ -82,7 +82,7 @@ The tokenizer finds Unicode `\w+` runs, keeps compound identifiers, adds their u
 
 ## Milestone 2B: Retrieval evaluation
 
-Evaluate one human-reviewed split per invocation. Maintain separate files for `development` and `frozen-test`. Use development annotations for iteration and reserve frozen-test for a fixed protocol. The first [human-reviewed development pilot](annotations/development/pilot-v1.json) has ten questions. See the [review record](annotations/pilot-development-review.md) for evidence and provenance. Benchmark scores are pending.
+Evaluate one human-reviewed split per invocation. Maintain separate files for `development` and `frozen-test`. Use development annotations for iteration and reserve frozen-test for a fixed protocol. The first [human-reviewed development pilot](annotations/development/pilot-v1.json) has ten questions. See the [review record](annotations/pilot-development-review.md) for evidence and provenance. The published [BM25 smoke test](reports/bm25-development-pilot-v1/publication-summary.md) uses this development split.
 
 ```console
 python -m src.evaluation data/processed/common_pitfalls.chunks.json path/to/development.json --top-k 5
@@ -129,3 +129,33 @@ The four quality measures are macro-averaged across answerable questions. A spli
 ## Milestone 3A — Prepare human annotations
 
 Use the [human annotation guide](annotations/README.md) to browse canonical evidence, find exact quotations, review draft spans, and export a validated schema-v1 annotation file. The development and frozen-test locations are ready for human-reviewed data.
+
+## Reproduce the BM25 development smoke test
+
+See the [publication summary](reports/bm25-development-pilot-v1/publication-summary.md), [original measurement summary](reports/bm25-development-pilot-v1/summary.md), and [original JSON report](reports/bm25-development-pilot-v1/report.json). Use the publication checkout for the fetch script. The report records the measured implementation commit d1a7f4d25cba6dadc831115fa6a0b818c7476c45. It also records Python 3.14.6, BeautifulSoup 4.15.0, SoupSieve 4.1.2, typing-extensions 4.16.0, and pytest 9.2.0.
+
+Run these commands from the root of a clean checkout with a Python 3.14.6 virtual environment active.
+
+~~~console
+python -m pip install -r requirements.txt soupsieve==4.1.2 typing-extensions==4.16.0
+python -m scripts.fetch_common_pitfalls
+python -m src.ingestion data/raw/common_pitfalls.html data/processed/common_pitfalls.json --expected-sha256 21fac11c181ab35624dcf8673f0475d403d4f6ecf0f9bead01a573d7642b515c
+python -m src.chunking data/processed/common_pitfalls.json data/processed/common_pitfalls.chunks.json --max-chars 1200
+python -m src.annotations data/processed/common_pitfalls.json review annotations/development/pilot-v1.json
+~~~
+
+The fetch starts at the reviewer-verified versioned endpoint and verifies the raw SHA-256. It reuses an existing matching file and refuses to replace any raw file. If the upstream bytes change, use a previously saved copy that matches the recorded SHA-256. Ingestion and chunking regenerate their destinations in the ignored processed directory. The HTML declares a canonical URL on the stable site. Let ingestion use that URL so the corpus revision reproduces.
+
+Check all four hashes before running the evaluator. The command prints the raw, processed, chunk, and annotation digests, in that order. Compare them with the artifact table in the original summary.
+
+~~~console
+python -c "from hashlib import sha256; from pathlib import Path; print(*(sha256(Path(p).read_bytes()).hexdigest() for p in ('data/raw/common_pitfalls.html', 'data/processed/common_pitfalls.json', 'data/processed/common_pitfalls.chunks.json', 'annotations/development/pilot-v1.json')), sep=chr(10))"
+~~~
+
+Run all three commands twice. They print to standard output. Save any new runs separately from the archived reports. Compare ranked IDs, quality metrics, and coverage flags while allowing latency to vary.
+
+~~~console
+python -m src.evaluation data/processed/common_pitfalls.chunks.json annotations/development/pilot-v1.json --top-k 1
+python -m src.evaluation data/processed/common_pitfalls.chunks.json annotations/development/pilot-v1.json --top-k 3
+python -m src.evaluation data/processed/common_pitfalls.chunks.json annotations/development/pilot-v1.json --top-k 5
+~~~
