@@ -1,4 +1,4 @@
-"""Locate and review human-selected evidence against one processed document."""
+"""Locate and review human-selected evidence in a processed document or corpus."""
 
 import argparse
 import json
@@ -6,13 +6,14 @@ from pathlib import Path
 import sys
 
 from src.chunking import SEPARATOR, _field, _range, chunk_document
+from src.corpus import corpus_sources
 
 
-def validate_annotations(annotations, corpus_revision, fields):
+def validate_annotations(annotations, corpus_revision, fields, expected_version=1):
     """Return draft questions after validating schema and mapped endpoints."""
     version = _field(annotations, "annotation_schema_version", int, "")
-    if type(version) is not int or version != 1:
-        raise ValueError("Expected annotation schema version 1")
+    if type(version) is not int or version != expected_version:
+        raise ValueError(f"Expected annotation schema version {expected_version}")
     if not _field(annotations, "annotation_version", str, "").strip():
         raise ValueError("annotation_version must be nonempty")
     if _field(annotations, "split", str, "") not in ("development", "frozen-test"):
@@ -35,11 +36,11 @@ def validate_annotations(annotations, corpus_revision, fields):
         units = _field(question, "evidence_units", list, path)
         if answerable != bool(units):
             raise ValueError(f"Evidence units must be present only for answerable questions at {path}")
-        _validate_evidence_units(units, fields, path)
+        _validate_evidence_units(units, fields, path, version)
     return questions
 
 
-def _validate_evidence_units(units, fields, path):
+def _validate_evidence_units(units, fields, path, version):
     for j, alternatives in enumerate(units):
         unit_path = f"{path}/evidence_units/{j}"
         if not isinstance(alternatives, list) or not alternatives:
@@ -47,9 +48,12 @@ def _validate_evidence_units(units, fields, path):
         for k, span in enumerate(alternatives):
             location = f"{unit_path}/{k}"
             section = _field(span, "section_id", str, location)
+            scope = ()
+            if version == 2:
+                scope = (_field(span, "manifest_id", str, location), _field(span, "document_id", str, location))
             start, end = _range(span, location)
             for key, offset in (("start_block_path", start), ("end_block_path", end - 1)):
-                field = fields.get((section, _field(span, key, str, location)))
+                field = fields.get((*scope, section, _field(span, key, str, location)))
                 if field is None or not field["start"] <= offset < field["end"]:
                     raise ValueError(f"Evidence endpoint does not match {key} at {location}")
 
@@ -106,7 +110,6 @@ def _section_label(section):
 
 
 def _browse(corpus, selector):
-    print(f"Corpus revision {corpus.revision}")
     for section_id, section in corpus.select_sections(selector).items():
         fields = section["fields"]
         print(f"\n{_section_label(section)}")
@@ -124,9 +127,9 @@ def _print_span(corpus, span):
     print("  " + json.dumps(corpus.text[span["start"]:span["end"]], ensure_ascii=False))
 
 
-def _review(corpus, annotations, questions):
+def _review(documents, annotations, questions):
     print(f"{annotations['split']} | annotation version {annotations['annotation_version']}")
-    print(f"Corpus revision {corpus.revision}")
+    print(f"Corpus revision {annotations['corpus_revision']}")
     for question in questions:
         status = "answerable" if question["answerable"] else "unanswerable"
         print(f"\n{question['id']} ({status})")
@@ -134,18 +137,66 @@ def _review(corpus, annotations, questions):
         for number, alternatives in enumerate(question["evidence_units"], start=1):
             for alternative, span in enumerate(alternatives, start=1):
                 print(f"Required unit {number}, alternative {alternative}")
-                _print_span(corpus, span)
+                name = span["manifest_id"] if annotations["annotation_schema_version"] == 2 else None
+                _print_span(documents[name], span)
+
+
+def _load_documents(artifact):
+    if not isinstance(artifact, dict) or "corpus_schema_version" not in artifact:
+        doc = EvidenceDocument(artifact)
+        return {None: doc}, doc.revision, doc.fields, 1
+    sources, revision = corpus_sources(artifact)
+    documents = {}
+    fields = {}
+    for source, entry in zip(sources, artifact["documents"]):
+        processed = _field(entry, "document", dict, "/documents")
+        doc = EvidenceDocument(processed)
+        if (doc.revision != source["document_id"] or processed["source"]["sha256"] != source["sha256"]
+                or processed["source"].get("documentation_version") != artifact["documentation_version"]):
+            raise ValueError("Nested document provenance disagrees with corpus entry")
+        name = source["id"]
+        documents[name] = doc
+        fields.update({(name, doc.revision, *key): value for key, value in doc.fields.items()})
+    return documents, revision, fields, 2
+
+
+def _inspect(documents, revision, args):
+    if args.document_name is not None:
+        if args.document_name not in documents:
+            raise ValueError(f"Unknown manifest document: {args.document_name}")
+        documents = {args.document_name: documents[args.document_name]}
+    print(f"Corpus revision {revision}")
+    found_section = found_quote = False
+    for name, doc in documents.items():
+        if args.section and not any(args.section in (key, section["anchor"]) for key, section in doc.sections.items()):
+            continue
+        found_section = True
+        if name is not None:
+            print(f"Document {name} ({doc.revision})")
+        if args.command == "browse":
+            _browse(doc, args.section)
+        else:
+            for span in doc.find(args.quote, args.section):
+                if name is not None:
+                    span.update(manifest_id=name, document_id=doc.revision)
+                _print_span(doc, span)
+                found_quote = True
+    if not found_section:
+        raise ValueError(f"Unknown section ID or anchor: {args.section!r}")
+    if args.command == "find" and not found_quote:
+        print("No valid literal matches.")
 
 
 def _argument_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("document", type=Path, help="Processed schema-v1 JSON")
+    parser.add_argument("document", type=Path, help="Processed document or documents.json corpus wrapper")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("browse", help="List sections or show all text fields in one section")
     find = commands.add_parser("find", help="List every valid, case-sensitive literal match")
     find.add_argument("quote")
     for command in ("browse", "find"):
         commands.choices[command].add_argument("--section", help="Section ID or section anchor")
+        commands.choices[command].add_argument("--document", dest="document_name", help="Manifest document ID")
     review = commands.add_parser("review", help="Validate a draft and display all selected excerpts")
     export = commands.add_parser("export", help="Write a validated schema-v1 annotation file")
     for command in (review, export):
@@ -158,21 +209,14 @@ def main() -> None:
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     try:
-        corpus = EvidenceDocument(json.loads(args.document.read_text(encoding="utf-8")))
-        if args.command == "browse":
-            _browse(corpus, args.section)
-        elif args.command == "find":
-            print(f"Corpus revision {corpus.revision}")
-            matches = list(corpus.find(args.quote, args.section))
-            if not matches:
-                print("No valid literal matches.")
-            for span in matches:
-                _print_span(corpus, span)
+        documents, revision, fields, version = _load_documents(json.loads(args.document.read_text(encoding="utf-8")))
+        if args.command in ("browse", "find"):
+            _inspect(documents, revision, args)
         else:
             annotations = json.loads(args.draft.read_text(encoding="utf-8"))
-            questions = validate_annotations(annotations, corpus.revision, corpus.fields)
+            questions = validate_annotations(annotations, revision, fields, version)
             if args.command == "review":
-                _review(corpus, annotations, questions)
+                _review(documents, annotations, questions)
             else:
                 output = json.dumps(annotations, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
                 with args.output.open("x", encoding="utf-8", newline="\n") as file:

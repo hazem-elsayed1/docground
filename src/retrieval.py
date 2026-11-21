@@ -1,4 +1,4 @@
-"""Rank one DocGround chunk artifact with a small, deterministic BM25 index."""
+"""Rank chunks from one document or a corpus with a deterministic BM25 index."""
 
 import argparse
 from collections import Counter
@@ -11,6 +11,7 @@ import re
 from urllib.parse import urlsplit
 
 from src.chunking import SEPARATOR, _digest, _field, _range
+from src.corpus import corpus_sources
 
 
 DEFAULT_TOP_K = 5
@@ -120,11 +121,29 @@ class BM25:
     def __init__(self, artifact_path: Path):
         data = artifact_path.read_bytes()
         artifact = json.loads(data.decode("utf-8"))
-        self.chunks = _validate_chunks(artifact)
         self.artifact_sha256 = sha256(data).hexdigest()
-        self.corpus_revision = self.chunks[0]["document_id"]
-        self.source_sha256 = self.chunks[0]["source_sha256"]
-        self.max_chars = artifact["max_chars"]
+        self.sources = None
+        if isinstance(artifact, dict) and "corpus_schema_version" in artifact:
+            self.sources, self.corpus_revision = corpus_sources(artifact)
+            self.chunks = []
+            limits = set()
+            for source, entry in zip(self.sources, artifact["documents"]):
+                nested = _field(entry, "chunk_artifact", dict, "/documents")
+                chunks = _validate_chunks(nested)
+                first = chunks[0]
+                if (first["document_id"], first["source_sha256"]) != (source["document_id"], source["sha256"]):
+                    raise ValueError("Nested chunk provenance disagrees with corpus entry")
+                self.chunks.extend(chunk | {"manifest_id": source["id"], "snapshot_url": source["url"]}
+                                   for chunk in chunks)
+                limits.add(nested["max_chars"])
+            if len(limits) != 1:
+                raise ValueError("Inconsistent chunk size limits in corpus")
+            self.max_chars = limits.pop()
+        else:
+            self.chunks = _validate_chunks(artifact)
+            self.corpus_revision = self.chunks[0]["document_id"]
+            self.source_sha256 = self.chunks[0]["source_sha256"]
+            self.max_chars = artifact["max_chars"]
 
         self._counts = [Counter(tokenize(chunk["text"])) for chunk in self.chunks]
         lengths = [counts.total() for counts in self._counts]

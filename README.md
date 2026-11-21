@@ -191,4 +191,24 @@ To verify a second build, use `python -m src.corpus build --output-dir data/proc
 | `documents.json` | `83898f9410710eb4f7acf3b97d0602235687a86ed7ededa0fb002bcca75edfab` |
 | `chunks.json` | `cee1cbdfc77457a77a6a1741bd72937f8095c511f0b4c4208616367e7dcfa882` |
 
-The parser keeps code whitespace, table cell order and explicit spans, and text inside collapsible panels. Figures and plots are represented only by any extracted surrounding text or captions. Math markup can contribute text but is not rendered or interpreted. Definition lists are flattened, and inline markup and hyperlink destinations are discarded. The existing 1,200-character packing rule keeps oversized text fields whole. The expanded wrappers are corpus build artifacts. Annotation and evaluation commands continue to use their single-document schemas.
+The parser keeps code whitespace, table cell order and explicit spans, and text inside collapsible panels. Figures and plots are represented only by any extracted surrounding text or captions. Math markup can contribute text but is not rendered or interpreted. Definition lists are flattened, and inline markup and hyperlink destinations are discarded. The existing 1,200-character packing rule keeps oversized text fields whole. The expanded wrappers are corpus build artifacts. The nested artifacts retain their single-document schemas.
+
+## Multi-document annotations and evaluation
+
+Use the corpus wrappers produced by `python -m src.corpus build`. These commands browse all documents or restrict a literal search to one manifest ID.
+
+~~~console
+python -m src.annotations data/processed/corpus-v1/documents.json browse
+python -m src.annotations data/processed/corpus-v1/documents.json find "cross-validation" --document cross_validation
+~~~
+
+Corpus drafts use `annotation_schema_version: 2`. Copy the printed corpus revision into the draft's `corpus_revision`. It is the existing canonical JSON digest of the array `["corpus-v1", manifest_sha256, ordered_document_revisions]`. This binds the draft to the ordered manifest and processed content. Each span from `find` includes **both** `manifest_id` (such as `compose`) and `document_id` (the full processed-document revision digest). Preserve them along with the section ID, endpoint field paths and half-open document-local offsets. The remaining draft fields follow schema v1. Different units or alternatives can reference different documents. Repeated text can be credited only at an approved location.
+
+Use `review` and `export` with the same documents wrapper and the draft path. For an independently reviewed schema-v2 dataset, the existing retrieval and evaluation commands accept the chunks wrapper:
+
+~~~console
+python -m src.retrieval data/processed/corpus-v1/chunks.json "QUERY" --top-k 5
+python -m src.evaluation data/processed/corpus-v1/chunks.json PATH_TO_REVIEWED_V2_ANNOTATIONS --top-k 5
+~~~
+
+BM25 computes document frequencies and average chunk length across all chunks in the wrapper. Returned chunks include their manifest ID and pinned snapshot URL alongside the original revision, source hash, canonical URL, anchors and field ranges. Evaluation protocol v1 retains its cutoffs, overlap rule for chunk relevance, single-chunk containment rule for evidence units, aggregation, timing and unanswerable policy. Corpus reports carry an ordered `sources` array of document identities, URLs, and hashes. Single-document inputs retain annotation schema v1, their original report shape, and their original CLI commands.

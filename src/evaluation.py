@@ -19,7 +19,7 @@ def _relevant_ids(chunks, spans):
     """Each relevant chunk intersects an annotated span in at least one source character."""
     return {
         chunk["id"] for chunk in chunks
-        if any(chunk["section_id"] == span["section_id"]
+        if any(chunk["document_id"] == span["document_id"] and chunk["section_id"] == span["section_id"]
                and any(field["start"] < span["end"] and span["start"] < field["end"]
                        for field in chunk["fields"])
                for span in spans)
@@ -27,11 +27,11 @@ def _relevant_ids(chunks, spans):
 
 
 def _score_question(index, units, hits, top_k):
+    if index.sources is None:
+        units = [[span | {"document_id": index.corpus_revision} for span in alternatives] for alternatives in units]
     relevant = _relevant_ids(index.chunks, [span for unit in units for span in unit])
     ranks = [rank for rank, hit in enumerate(hits, start=1) if hit["id"] in relevant]
-    covered = [any(evidence_coverage(
-        [span | {"document_id": index.corpus_revision} for span in alternatives], hits
-    )) for alternatives in units]
+    covered = [any(evidence_coverage(alternatives, hits)) for alternatives in units]
     return {
         "precision_at_k": len(ranks) / top_k,
         "recall_at_k": len(ranks) / len(relevant),
@@ -43,9 +43,13 @@ def _score_question(index, units, hits, top_k):
 
 def evaluate(index: BM25, annotations: dict, top_k: int = DEFAULT_TOP_K) -> dict:
     _validate_top_k(top_k)
-    fields = {(chunk["section_id"], field["path"]): field
-              for chunk in index.chunks for field in chunk["fields"]}
-    questions = validate_annotations(annotations, index.corpus_revision, fields)
+    fields = {}
+    for chunk in index.chunks:
+        scope = () if index.sources is None else (chunk["manifest_id"], chunk["document_id"])
+        for field in chunk["fields"]:
+            fields[(*scope, chunk["section_id"], field["path"])] = field
+    version = 1 if index.sources is None else 2
+    questions = validate_annotations(annotations, index.corpus_revision, fields, version)
     rows = []
     for question in questions:
         start = perf_counter_ns()
@@ -70,7 +74,7 @@ def evaluate(index: BM25, annotations: dict, top_k: int = DEFAULT_TOP_K) -> dict
         "annotation_version": annotations["annotation_version"],
         "split": annotations["split"],
         "corpus_revision": index.corpus_revision,
-        "source_sha256": index.source_sha256,
+        **({"source_sha256": index.source_sha256} if index.sources is None else {"sources": index.sources}),
         "chunk_artifact_sha256": index.artifact_sha256,
         "chunk_schema_version": 1,
         "chunk_max_chars": index.max_chars,

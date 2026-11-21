@@ -16,6 +16,11 @@ DEFAULT_MANIFEST = Path("corpus/scikit-learn-1.9.1-v1.json")
 
 def load_manifest(path: Path) -> dict:
     manifest = json.loads(path.read_text(encoding="utf-8"))
+    validate_manifest(manifest)
+    return manifest
+
+
+def validate_manifest(manifest: dict) -> None:
     schema = _field(manifest, "manifest_schema_version", int, "")
     if type(schema) is not int or schema != 1:
         raise ValueError("Expected manifest schema version 1")
@@ -36,7 +41,32 @@ def load_manifest(path: Path) -> dict:
     if not documents:
         raise ValueError("Manifest must contain at least one document")
     _validate_documents(documents, release.rsplit(".", 1)[0])
-    return manifest
+
+
+def corpus_sources(wrapper: dict) -> tuple[list[dict], str]:
+    """Check the embedded manifest and bind its ordered entries to document revisions."""
+    version = _field(wrapper, "corpus_schema_version", int, "")
+    if type(version) is not int or version != 1:
+        raise ValueError("Expected corpus schema version 1")
+    entries = _field(wrapper, "documents", list, "")
+    sources = []
+    revisions = set()
+    for entry in entries:
+        source = {key: _field(entry, key, str, "/documents")
+                  for key in ("id", "url", "sha256", "document_id")}
+        revision = source["document_id"]
+        if not re.fullmatch(r"[0-9a-f]{64}", revision) or revision in revisions:
+            raise ValueError("Invalid or duplicate document revision")
+        revisions.add(revision)
+        sources.append(source)
+    manifest = {key: wrapper.get(key) for key in ("corpus_version", "documentation_version", "attribution")}
+    manifest["manifest_schema_version"] = 1
+    manifest["documents"] = [{k: s[k] for k in ("id", "url", "sha256")} for s in sources]
+    validate_manifest(manifest)
+    digest = _digest(manifest)
+    if digest != wrapper.get("manifest_sha256"):
+        raise ValueError("Corpus manifest SHA-256 mismatch")
+    return sources, _digest(["corpus-v1", digest, [s["document_id"] for s in sources]])
 
 
 def _validate_documents(documents, version_series):
